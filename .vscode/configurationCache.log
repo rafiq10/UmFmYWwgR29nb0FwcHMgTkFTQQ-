@@ -1,0 +1,1 @@
+{"buildTargets":["all","bin/url-collector","lint","test","unit-test","unit-test-coverage"],"launchTargets":[],"customConfigurationProvider":{"workspaceBrowse":{"browsePath":[],"compilerArgs":[]},"fileIndex":[]}}

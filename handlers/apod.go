@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -33,12 +34,13 @@ func NewPictureUrlServer() *PictureUrlServer {
 	return &PictureUrlServer{store: str}
 }
 
-func (s InMemoryPicturesUrlStore) GetPictureUrlByDate(from, to string) (res []string, err error) {
+func (s InMemoryPicturesUrlStore) GetPictureUrlByDate(ctx context.Context, from, to string) (pics []string, err error) {
 	const dateLayout = "2006-01-02"
-	var picsMap sync.Map
+
 	var dates []string
 
-	fmt.Println("got here")
+	l := sync.Mutex{}
+
 	s.urls = make(map[time.Time]string)
 	startDate, err := time.Parse(dateLayout, from)
 	if err != nil {
@@ -51,41 +53,84 @@ func (s InMemoryPicturesUrlStore) GetPictureUrlByDate(from, to string) (res []st
 
 	days := int(endDate.Sub(startDate).Hours() / 24)
 
+	// check reasonable date range
 	for i := 0; i < days+1; i++ {
 		dt := startDate.AddDate(0, 0, i)
 		dates = append(dates, dt.Format(dateLayout))
 	}
-	wg := sync.WaitGroup{}
-	// wg.Add(len(dates))
-	for i := 0; i < len(dates); i++ {
-		wg.Add(1)
-		go func(idx int) {
-			fmt.Println(dates[idx])
-			pic, e := GetPicturesFromApod(dates[idx])
-			if e.Error != "" {
-				fmt.Println(e.Error)
-				panic(e)
+
+	input := make(chan string)
+	errch := make(chan error)
+	done := make(chan struct{})
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	loader := func() error {
+		defer wg.Done()
+		for {
+			select {
+			case date := <-input:
+				pic, err := GetPicturesFromApod(date)
+				if err != nil {
+					errch <- err
+					break
+				}
+				l.Lock()
+				pics = append(pics, pic.Url)
+				l.Unlock()
+			case <-done:
+				return nil
+			case <-ctx.Done():
+				return nil
 			}
-			picsMap.Store(dates[idx], pic.Url)
-			wg.Done()
-		}(i)
+		}
 	}
-	wg.Wait()
+
+	go func() {
+		for err := range errch {
+			fmt.Printf("Err: %v", err)
+			return
+		}
+	}()
+	MAX_CONCURRENT := 5
+	for i := 0; i < MAX_CONCURRENT; i++ {
+		wg.Add(1)
+		go loader()
+	}
 	for i := 0; i < len(dates); i++ {
-		url, ok := picsMap.Load(dates[i])
-		if !ok {
-			return nil, fmt.Errorf("picsMap.Load(dates[%d])=false", i)
+		select {
+		case <-ctx.Done():
+			return nil, nil
+		default:
+			break
 		}
-		dt, err := time.Parse(dateLayout, dates[i])
-		if err != nil {
-			return nil, fmt.Errorf("time.Parse('2006-01-02',%s)=%v", dates[i], err)
-		}
-		s.urls[dt] = fmt.Sprint(url)
-		res = append(res, fmt.Sprint(url))
+		input <- dates[i]
 	}
-	return res, nil
+	close(done)
+	wg.Wait()
+	close(errch)
+
+	// All data in picsMap
+	// Errors received
+	// return errors
+
+	return pics, nil
+	// for i := 0; i < len(dates); i++ {
+	// 	url, ok := picsMap.Load(dates[i])
+	// if ok {
+	// 	return nil, fmt.Errorf("picsMap.Load(dates[%d])=false", i)
+	// }
+	// err := time.Parse(dateLayout, dates[i])
+	// if err != nil {
+	// 	return nil, fmt.Errorf("time.Parse('2006-01-02',%s)=%v", dates[i], err)
+	// }
+	// ur f            in            t(url)
+	// res       apes                fmt.Sprint(url))
+	// }
+	// l
 }
-func GetPicturesFromApod(date string) (pld *ApodPayload, e ErrStr) {
+func GetPicturesFromApod(date string) (pld *ApodPayload, e error) {
 	var client http.Client
 
 	apiKey := en.GetEnvVar("API_KEY", "DEMO_KEY")
@@ -94,28 +139,28 @@ func GetPicturesFromApod(date string) (pld *ApodPayload, e ErrStr) {
 	fmt.Println(fullURL)
 	resp, err := client.Get(fullURL)
 	if err != nil {
-		e = ErrStr{Error: fmt.Sprintf("client.Get(%s)=%s\n", fullURL, err.Error())}
+		e = fmt.Errorf("client.Get(%s)=%s\n", fullURL, err.Error())
 		return nil, e
 	}
 
-	defer resp.Body.Close()
+	// defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		e = ErrStr{Error: "resp.StatusCode=" + strconv.Itoa(resp.StatusCode) + " for URL: " + fullURL}
+		e = fmt.Errorf("resp.StatusCode=" + strconv.Itoa(resp.StatusCode) + " for URL: " + fullURL)
 		return nil, e
 	}
 	remainingLimit, err := strconv.Atoi(resp.Header.Get("X-RateLimit-Remaining"))
 	if err != nil {
-		e = ErrStr{Error: "Cannot get X-RateLimit-Remaining header: " + err.Error()}
+		e = fmt.Errorf("Cannot get X-RateLimit-Remaining header: " + err.Error())
 		return nil, e
 	}
 	if remainingLimit < 1 {
-		e = ErrStr{Error: "X-RateLimit-Remaining exceeded"}
+		e = fmt.Errorf("X-RateLimit-Remaining exceeded")
 		return nil, e
 	}
 	err = json.NewDecoder(resp.Body).Decode(&pld)
 	if err != nil {
-		e = ErrStr{Error: fmt.Sprintf("json.NewDecoder(response.Body).Decode(&pld)=%v\n", err)}
+		e = fmt.Errorf("json.NewDecoder(response.Body).Decode(&pld)=%v\n", err)
 		return nil, e
 	}
-	return pld, ErrStr{Error: ""}
+	return pld, nil
 }

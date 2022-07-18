@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -23,7 +24,7 @@ func JSONError(w http.ResponseWriter, err *ErrStr, code int) {
 }
 
 type UrlStore interface {
-	GetPictureUrlByDate(from, to string) ([]string, error)
+	GetPictureUrlByDate(ctx context.Context, from, to string) (pics []string, err error)
 }
 type Response struct {
 	URLS []string `json:"urls"`
@@ -74,7 +75,8 @@ func (p *PictureUrlServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		JSONError(w, e, http.StatusBadRequest)
 		return
 	}
-	res, err := p.store.GetPictureUrlByDate(from, to)
+	ctx := context.Background()
+	res, err := p.store.GetPictureUrlByDate(ctx, from, to)
 	if err != nil {
 		e = &ErrStr{Error: fmt.Sprintf("p.store.GetPictureUrlByDate(%s, %s)=%v", from, to, err)}
 		JSONError(w, e, http.StatusBadRequest)

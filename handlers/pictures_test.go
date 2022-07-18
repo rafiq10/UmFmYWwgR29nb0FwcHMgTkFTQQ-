@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,7 +14,7 @@ type StubPicturesUrlStore struct {
 	urls map[time.Time]string
 }
 
-func (s *StubPicturesUrlStore) GetPictureUrlByDate(from, to string) ([]string, error) {
+func (s *StubPicturesUrlStore) GetPictureUrlByDate(ctx context.Context, from, to string) ([]string, error) {
 	const layout = "2006-01-02"
 	var result []string
 	start, err := time.Parse(layout, from)
